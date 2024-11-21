@@ -1,0 +1,57 @@
+name: ci/cd
+
+on:
+  push:
+    paths:
+      - 'src/**'
+      - '*.sln'
+      - '*.props'
+      - '**/*.yml'
+  pull_request: {}
+
+env:
+  VERSION_FILE_PATH: src/Directory.Build.props
+  NUGET_KEY: ${{ secrets.NUGET_KEY }}
+  TAG_COMMIT: false
+jobs:
+  test_and_publish_if_allowed:
+    name: test and publish if allowed
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Setup dotnet
+        uses: actions/setup-dotnet@v3
+        with:
+          dotnet-version: | 
+            6.0.x
+            7.0.x
+
+      - name: Run tests
+        run: dotnet test src/ --collect:"XPlat Code Coverage"
+        
+      - name: Publish code coverage
+        uses: codecov/codecov-action@v3
+        with:
+          flags: integration
+          files: src/FairyBread.Tests/TestResults/*/coverage.cobertura.xml
+
+      - name: Publish FairyBread on version change
+        if: ${{ endsWith(github.ref, 'main') }}
+        id: publish_nuget
+        uses: rohith/publish-nuget@v2
+        with:
+          PROJECT_FILE_PATH: src/FairyBread/FairyBread.csproj
+          TAG_COMMIT: true
+          
+      - name: Create Release
+        if: ${{ success() && steps.publish_nuget.outputs.VERSION }}
+        id: create_release
+        uses: actions/create-release@latest
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: ${{ steps.publish_nuget.outputs.VERSION }}
+          release_name: ${{ steps.publish_nuget.outputs.VERSION }}
+          draft: false
+          prerelease: ${{ contains(steps.publish_nuget.outputs.VERSION, 'preview') || contains(steps.publish_nuget.outputs.VERSION, 'rc') }}
